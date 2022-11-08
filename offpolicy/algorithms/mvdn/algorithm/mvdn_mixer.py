@@ -27,13 +27,13 @@ class M_VDNMixer(nn.Module):
         else:
             self.num_mixer_q_inps = self.num_agents
 
-    def forward(self, agent_q_inps):
+    def forward(self, agent_q_inps, states):
         """
         Computes Q_tot by summing individual agent q values.
         :param agent_q_inps: (torch.Tensor) individual agent q values
 
         :return Q_tot: (torch.Tensor) computed Q_tot values
         """
-        agent_q_inps = to_torch(agent_q_inps)
+        agent_q_inps = to_torch(agent_q_inps)  # [32, 3]
 
         return agent_q_inps.sum(dim=-1).view(-1, 1, 1)

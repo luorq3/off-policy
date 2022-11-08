@@ -68,6 +68,7 @@ class M_QMix:
     def train_policy_on_batch(self, batch, use_same_share_obs):
         """See parent class."""
         # unpack the batch
+        # Useless for vdn: cent_obs_batch, cent_nobs_batch, avail_act_batch
         obs_batch, cent_obs_batch, \
         act_batch, rew_batch, \
         nobs_batch, cent_nobs_batch, \
@@ -76,14 +77,14 @@ class M_QMix:
         importance_weights, idxes = batch
 
         if use_same_share_obs:
-            cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]])
-            cent_nobs_batch = to_torch(cent_nobs_batch[self.policy_ids[0]])
+            cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]])  # [32, 54]
+            cent_nobs_batch = to_torch(cent_nobs_batch[self.policy_ids[0]])  # [32, 54]
         else:
             choose_agent_id = 0
             cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]][choose_agent_id])
             cent_nobs_batch = to_torch(cent_nobs_batch[self.policy_ids[0]][choose_agent_id])
 
-        dones_env_batch = to_torch(dones_env_batch[self.policy_ids[0]]).to(**self.tpdv)
+        dones_env_batch = to_torch(dones_env_batch[self.policy_ids[0]]).to(**self.tpdv)  # [32, 1]
 
         # individual agent q values: each element is of shape (batch_size, 1)
         agent_qs = []
@@ -99,9 +100,9 @@ class M_QMix:
             curr_nobs_batch = to_torch(nobs_batch[p_id])
 
             # stacked_obs_batch size : [agent_num*batch_size, obs_shape]
-            stacked_act_batch = torch.cat(list(curr_act_batch), dim=-2)
-            stacked_obs_batch = torch.cat(list(curr_obs_batch), dim=-2)
-            stacked_nobs_batch = torch.cat(list(curr_nobs_batch), dim=-2)
+            stacked_act_batch = torch.cat(list(curr_act_batch), dim=-2)  # [96, 5]
+            stacked_obs_batch = torch.cat(list(curr_obs_batch), dim=-2)  # [96, 18]
+            stacked_nobs_batch = torch.cat(list(curr_nobs_batch), dim=-2)  # [96, 18]
 
             if navail_act_batch[p_id] is not None:
                 curr_navail_act_batch = to_torch(navail_act_batch[p_id])
@@ -110,9 +111,9 @@ class M_QMix:
                 stacked_navail_act_batch = None
 
             # curr_obs_batch size : agent_num*batch_size*obs_shape
-            batch_size = curr_obs_batch.shape[1]
+            batch_size = curr_obs_batch.shape[1]  # 32
 
-            pol_all_q_out = policy.get_q_values(stacked_obs_batch)
+            pol_all_q_out = policy.get_q_values(stacked_obs_batch)  # [96, 5]
 
             if isinstance(pol_all_q_out, list):
                 # multidiscrete case
@@ -129,18 +130,18 @@ class M_QMix:
                 pol_agents_q_outs = Q_combined_parts.split(split_size=batch_size, dim=-2)
             else:
                 # get the q values associated with the action taken acording ot the batch
-                stacked_act_batch_ind = stacked_act_batch.max(dim=-1)[1]
+                stacked_act_batch_ind = stacked_act_batch.max(dim=-1)[1]  # [96]
                 # pol_q_outs : batch_size * 1
-                pol_q_outs = torch.gather(pol_all_q_out, 1, stacked_act_batch_ind.unsqueeze(dim=-1))
+                pol_q_outs = torch.gather(pol_all_q_out, 1, stacked_act_batch_ind.unsqueeze(dim=-1))  # [96, 1]
                 # separate into agent q sequences for each agent, then cat along the final dimension to prepare for mixer input
-                pol_agents_q_outs = pol_q_outs.split(split_size=batch_size, dim=-2)
+                pol_agents_q_outs = pol_q_outs.split(split_size=batch_size, dim=-2)  # (3, [32, 1])
 
-            agent_qs.append(torch.cat(pol_agents_q_outs, dim=-1))
+            agent_qs.append(torch.cat(pol_agents_q_outs, dim=-1))  # agent_qs[[32, 3], ...]
 
             with torch.no_grad():
                 if self.args.use_double_q:
                     # actions come from live q; get the q values for the final nobs
-                    pol_next_qs = policy.get_q_values(stacked_nobs_batch)
+                    pol_next_qs = policy.get_q_values(stacked_nobs_batch)  # [96, 5]
 
                     if type(pol_next_qs) == list:
                         # multidiscrete case
@@ -157,7 +158,7 @@ class M_QMix:
                         if stacked_navail_act_batch is not None:
                             pol_next_qs[stacked_navail_act_batch == 0.0] = -1e10
                         # greedily choose actions which maximize the q values and convert these actions to onehot
-                        pol_nacts = pol_next_qs.max(dim=-1)[1]
+                        pol_nacts = pol_next_qs.max(dim=-1)[1]  # [96]
                         # q values given by target but evaluated at actions taken by live
                         targ_pol_next_qs = target_policy.get_q_values(stacked_nobs_batch, action_batch=pol_nacts)
                 else:
@@ -167,17 +168,17 @@ class M_QMix:
                                                                    t_env=None,
                                                                    explore=False)
                     targ_pol_next_qs = targ_pol_next_qs.max(dim=-1)[0]
-                    targ_pol_next_qs = targ_pol_next_qs.unsqueeze(-1)
+                    targ_pol_next_qs = targ_pol_next_qs.unsqueeze(-1)  # [96, 1]
                 # separate the next qs into sequences for each agent
-                pol_agents_nq_sequence = targ_pol_next_qs.split(split_size=batch_size, dim=-2)
+                pol_agents_nq_sequence = targ_pol_next_qs.split(split_size=batch_size, dim=-2)  # (3, [32, 1])
             # cat target qs along the final dim
-            agent_next_qs.append(torch.cat(pol_agents_nq_sequence, dim=-1))
+            agent_next_qs.append(torch.cat(pol_agents_nq_sequence, dim=-1))  # agent_qs[[32, 3], ...]
         # combine the agent q value sequences to feed into mixer networks
-        agent_qs = torch.cat(agent_qs, dim=-1)
-        agent_next_qs = torch.cat(agent_next_qs, dim=-1)
+        agent_qs = torch.cat(agent_qs, dim=-1)  # [32, 3]
+        agent_next_qs = torch.cat(agent_next_qs, dim=-1)  # [32, 3]
 
-        curr_Q_tot = self.mixer(agent_qs, cent_obs_batch).squeeze(-1)
-        next_step_Q_tot = self.target_mixer(agent_next_qs, cent_nobs_batch).squeeze(-1)
+        curr_Q_tot = self.mixer(agent_qs, cent_obs_batch).squeeze(-1)  # [32, 1]
+        next_step_Q_tot = self.target_mixer(agent_next_qs, cent_nobs_batch).squeeze(-1)  # [32, 1]
 
         # all agents must share reward, so get the reward sequence for an agent
         # form bootstrapped targets

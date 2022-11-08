@@ -84,7 +84,7 @@ class QMix(Trainer):
         importance_weights, idxes = batch
 
         if self.use_same_share_obs:
-            cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]])
+            cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]])  # [26, 32, 54]
         else:
             choose_agent_id = 0
             cent_obs_batch = to_torch(cent_obs_batch[self.policy_ids[0]][choose_agent_id])
@@ -101,12 +101,12 @@ class QMix(Trainer):
             policy = self.policies[p_id]
             target_policy = self.target_policies[p_id]
             # get data related to the policy id
-            pol_obs_batch = to_torch(obs_batch[p_id])
-            curr_act_batch = to_torch(act_batch[p_id]).to(**self.tpdv)
+            pol_obs_batch = to_torch(obs_batch[p_id])  # [3, 26, 32, 18]
+            curr_act_batch = to_torch(act_batch[p_id]).to(**self.tpdv)  # [3, 25, 32, 5]
 
             # stack over policy's agents to process them at once
-            stacked_act_batch = torch.cat(list(curr_act_batch), dim=-2)
-            stacked_obs_batch = torch.cat(list(pol_obs_batch), dim=-2)
+            stacked_act_batch = torch.cat(list(curr_act_batch), dim=-2)  # [25, 96, 5]
+            stacked_obs_batch = torch.cat(list(pol_obs_batch), dim=-2)  # [26, 96, 18]
 
             if avail_act_batch[p_id] is not None:
                 curr_avail_act_batch = to_torch(avail_act_batch[p_id])
@@ -115,25 +115,25 @@ class QMix(Trainer):
                 stacked_avail_act_batch = None
 
             # [num_agents, episode_length, episodes, dim]
-            batch_size = pol_obs_batch.shape[2]
-            total_batch_size = batch_size * len(self.policy_agents[p_id])
+            batch_size = pol_obs_batch.shape[2]  # 32
+            total_batch_size = batch_size * len(self.policy_agents[p_id])  # 32 * 3 = 96
 
-            sum_act_dim = int(sum(policy.act_dim)) if policy.multidiscrete else policy.act_dim
+            sum_act_dim = int(sum(policy.act_dim)) if policy.multidiscrete else policy.act_dim  # 5
 
             pol_prev_act_buffer_seq = torch.cat((torch.zeros(1, total_batch_size, sum_act_dim).to(**self.tpdv),
-                                                 stacked_act_batch))
+                                                 stacked_act_batch))  # [26, 96, 5]
 
             # sequence of q values for all possible actions
             pol_all_q_seq, _ = policy.get_q_values(stacked_obs_batch, pol_prev_act_buffer_seq,
-                                                                            policy.init_hidden(-1, total_batch_size))
+                                                                            policy.init_hidden(-1, total_batch_size))  # [26, 96, 5]
             # get only the q values corresponding to actions taken in action_batch. Ignore the last time dimension.
             if policy.multidiscrete:
                 pol_all_q_curr_seq = [q_seq[:-1] for q_seq in pol_all_q_seq]
                 pol_q_seq = policy.q_values_from_actions(pol_all_q_curr_seq, stacked_act_batch)
             else:
-                pol_q_seq = policy.q_values_from_actions(pol_all_q_seq[:-1], stacked_act_batch)
-            agent_q_out_sequence = pol_q_seq.split(split_size=batch_size, dim=-2)
-            agent_q_seq.append(torch.cat(agent_q_out_sequence, dim=-1))
+                pol_q_seq = policy.q_values_from_actions(pol_all_q_seq[:-1], stacked_act_batch)  # [25, 96, 1]
+            agent_q_out_sequence = pol_q_seq.split(split_size=batch_size, dim=-2)  # (3, [25, 32, 1])
+            agent_q_seq.append(torch.cat(agent_q_out_sequence, dim=-1))  # [[25, 32, 3], ...]
 
             with torch.no_grad():
                 if self.args.use_double_q:
@@ -143,9 +143,9 @@ class QMix(Trainer):
                 else:
                     _, _, target_q_seq = target_policy.get_actions(stacked_obs_batch, pol_prev_act_buffer_seq, target_policy.init_hidden(-1, total_batch_size))
             # don't need the first Q values for next step
-            target_q_seq = target_q_seq[1:]
-            agent_nq_sequence = target_q_seq.split(split_size=batch_size, dim=-2)
-            agent_nq_seq.append(torch.cat(agent_nq_sequence, dim=-1))
+            target_q_seq = target_q_seq[1:]  # [25, 96, 1]
+            agent_nq_sequence = target_q_seq.split(split_size=batch_size, dim=-2)  # [3, [25, 32, 1]]
+            agent_nq_seq.append(torch.cat(agent_nq_sequence, dim=-1))  # [[25, 32, 3], ...]
 
         # combine agent q value sequences to feed into mixer networks
         agent_q_seq = torch.cat(agent_q_seq, dim=-1)
@@ -161,8 +161,11 @@ class QMix(Trainer):
         bad_transitions_mask = torch.cat((torch.zeros(1, batch_size, 1).to(**self.tpdv), dones_env_batch[:self.episode_length - 1, :, :]))
 
         # bootstrapped targets
+        # dones_env_batch = dones_env_batch.reshape(-1, 1)  # bug fix
+        # rewards = rewards.reshape(-1, 1)
         Q_tot_target_seq = rewards + (1 - dones_env_batch) * self.args.gamma * next_step_Q_tot_seq
         # Bellman error and mask out invalid transitions
+        # bad_transitions_mask = bad_transitions_mask.reshape(-1, 1)
         error = (Q_tot_seq - Q_tot_target_seq.detach()) * (1 - bad_transitions_mask)
 
         if self.use_per:
