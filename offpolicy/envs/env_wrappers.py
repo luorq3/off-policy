@@ -420,10 +420,19 @@ class DummyVecEnv(ShareVecEnv):
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
 
+    def step(self, actions, render=False):
+        """
+        Step the environments synchronously.
+
+        This is available for backwards compatibility.
+        """
+        self.step_async(actions)
+        return self.step_wait(render)
+
     def step_async(self, actions):
         self.actions = actions
 
-    def step_wait(self):
+    def step_wait(self, render=False):
         results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
         obs, rews, dones, infos = map(np.array, zip(*results))
 
