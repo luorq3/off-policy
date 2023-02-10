@@ -2,8 +2,8 @@ import numpy as np
 import gym
 from gym import spaces
 import pygame
-from onpolicy.envs.combatV2.entities import Ship, Fort
-from onpolicy.envs.combatV2.rendering import Viewer
+from offpolicy.envs.combatV2.entities import Ship, Fort
+from offpolicy.envs.combatV2.rendering import Viewer
 import time
 
 
@@ -93,6 +93,7 @@ class Game(gym.Env):
         return states
 
     def step(self, actions, render=False):
+        print(f"step function: render={render}")
         reward = 0
         individual_rewards = [0 for _ in range(self.n_ships)]
         infos = {i: {} for i in range(self.n_ships)}
@@ -193,7 +194,7 @@ class Game(gym.Env):
         self._random_fort_action()
         obs = self._get_state()
         rewards = np.array([[reward] for _ in range(self.n_ships)], dtype=np.float32)
-        dones = (np.array([ship.is_dead for ship in self.ships]) | done).astype(np.float32)
+        dones = (np.array([[ship.is_dead] for ship in self.ships]) | done).astype(np.float32)
         return obs, rewards, dones, infos
 
     def reset(self):
